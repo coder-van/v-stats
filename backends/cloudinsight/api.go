@@ -3,12 +3,12 @@ package cloudinsight
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-	"log"
-	"io"
 )
 
 // API XXX
@@ -34,7 +34,7 @@ func NewAPI(ciURL string, licenseKey string, timeout time.Duration, proxy ...str
 			TLSClientConfig: &tls.Config{},
 		}
 	}
-	
+
 	api := &API{
 		ciURL:      ciURL,
 		licenseKey: licenseKey,
@@ -49,7 +49,7 @@ func (api *API) Post(path string, body io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("error @post-data: unable to create http.Request, %s", err.Error())
 	}
-	
+
 	resp, err := api.do(req)
 	defer func() {
 		if resp != nil {
@@ -60,25 +60,24 @@ func (api *API) Post(path string, body io.Reader) error {
 			}
 		}
 	}()
-	
+
 	if err != nil {
 		return fmt.Errorf("error @post-data:  %s", err.Error())
 	}
-	
+
 	if resp.StatusCode < 200 || resp.StatusCode > 209 {
 		return fmt.Errorf("error @post-data: received bad status code, %d", resp.StatusCode)
 	}
-	
+
 	return nil
 }
-
 
 func (api *API) do(req *http.Request) (resp *http.Response, err error) {
 	req.Header.Add("User-Agent", fmt.Sprintf("Cloudinsight Agent/%s", api.version))
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Content-Encoding", "deflate")
 	req.Header.Add("Accept", "text/html, */*")
-	
+
 	resp, err = api.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -91,7 +90,7 @@ func (api *API) GetURL(msgType string) string {
 	q := url.Values{
 		"license_key": []string{api.licenseKey},
 	}
-	
+
 	switch msgType {
 	case "metrics":
 		return fmt.Sprintf("%s/infrastructure/metrics?%s", api.ciURL, q.Encode())

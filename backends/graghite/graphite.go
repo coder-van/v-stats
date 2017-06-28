@@ -1,19 +1,20 @@
 package graghite
 
 import (
-	"net"
 	"bufio"
+	"net"
 )
 
 type Graphite struct {
-	Addr        string  // Network address to connect to
+	Addr string // Network address to connect to
 }
 
-func NewGraphite(addr string) *Graphite{
+func NewGraphite(addr string) *Graphite {
 	return &Graphite{
 		Addr: addr,
 	}
 }
+
 func (g *Graphite) Flush(bs []byte) error {
 	conn, err := net.Dial("tcp", g.Addr)
 	if nil != err {

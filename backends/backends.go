@@ -1,103 +1,116 @@
 package backends
 
 import (
-	"github.com/coder-van/v-stats/metrics"
-	"time"
-	"fmt"
-	"sync"
 	gb "github.com/coder-van/v-stats/backends/graghite"
+	"github.com/coder-van/v-stats/metrics"
+	"github.com/coder-van/v-util/log"
 	"strings"
+	"sync"
+	"time"
 )
 
 type InterfaceBackend interface {
 	Flush(batch []byte) error
 }
 
-const MetricBatchSize = 128
+func NewBackendManger(seconds int,
+	dataPointCh chan metrics.MetricDataPoint, bufSize int) *BackendManger {
 
-func NewBackendManger() *BackendManger {
-	
 	b := &BackendManger{
-		RegisteredBackends: make(map[string]InterfaceBackend, 10),
-		metricsBuffer:      NewBuffer(MetricBatchSize),
+		exit:               make(chan bool),
+		RegisteredBackends: make(map[string]InterfaceBackend, 10), // todo size
+		metricsBuffer:      NewBuffer(bufSize * 2),
+		metricsBufferSize:  bufSize * 2,
+		FlushInterval:      time.Duration(1e9 * seconds),
+		dataPointCh:        dataPointCh,
+		logger:             log.GetLogger("statsd", log.RotateModeMonth),
 	}
 	return b
 }
 
-
 type BackendManger struct {
+	exit               chan bool
 	RegisteredBackends map[string]InterfaceBackend
 	metricsBuffer      *Buffer
+	metricsBufferSize  int
+	FlushInterval      time.Duration
+	dataPointCh        chan metrics.MetricDataPoint
+	logger             *log.Vlogger
 }
 
-
-func (b *BackendManger) RegisterBackend(name string, backend InterfaceBackend)  {
-	if _, ok:= b.RegisteredBackends[name]; ok {
+func (b *BackendManger) RegisterBackend(name string, backend InterfaceBackend) {
+	if _, ok := b.RegisteredBackends[name]; ok {
 		return
 	}
 	b.RegisteredBackends[name] = backend
 }
 
-func (b *BackendManger) RegisterGraphite(addr string)  {
+func (b *BackendManger) RegisterGraphite(addr string) {
 	// address, _ := net.ResolveTCPAddr("net", addr)
 	g := gb.NewGraphite(addr)
 	b.RegisterBackend("graghite:"+addr, g)
 }
 
-func (b *BackendManger) Run(shutdown chan struct{}, datapointSourceCh chan metrics.MetricDataPoint,
-	interval time.Duration) error {
-	// wait the collect threads to run, so that
-	// emitter will emitted by metrics flush action.
-	//time.Sleep(200 * time.Millisecond)
-	
+func (b *BackendManger) run(shutdown chan bool, interval time.Duration) {
+	defer close(b.exit)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	//length = len(e.bm.RegisteredBackends)
-	//chs = make([]chan int)
+
+	b.logger.Println("Statsd BackendManger started")
 	for {
 		select {
 		case <-shutdown:
-			fmt.Println("Hang on, emitting any cached metrics before shutdown")
+			b.logger.Println("Hang on, Flush before shutdown")
 			b.Flush()
-			return nil
+			b.logger.Println("Statsd BackendManger stoped")
+			return
 		case <-ticker.C:
 			b.Flush()
-		case m := <- datapointSourceCh:
+		case m := <-b.dataPointCh:
 			b.add(m)
 		}
 	}
+}
+
+func (b *BackendManger) Start() {
+	b.logger.Println("Statsd BackendManger starting")
+	go b.run(b.exit, b.FlushInterval)
+}
+
+func (b *BackendManger) Stop() {
+	b.logger.Println("Statsd BackendManger stoping")
+	b.exit <- true
 }
 
 func (b *BackendManger) add(dp metrics.MetricDataPoint) {
 	// fmt.Printf("add datapoint %s", dp.String())
 	d := dp.String()
 	if strings.Index(d, "cpu.cpu-total.idle") >= 0 {
-		fmt.Println(d)
+		b.logger.Println(d)
 	}
 	b.metricsBuffer.Add(dp)
-	// 当缓存到了80%的时候就刷新缓存了
-	if b.metricsBuffer.Len() >= int(MetricBatchSize*0.5) {
+	// 当缓存到了50%的时候就刷新缓存了
+	if b.metricsBuffer.Len() >= int(b.metricsBufferSize) {
 		b.Flush()
 	}
 }
 
-
-
 func (b *BackendManger) Flush() {
 	var wg sync.WaitGroup
-	batch := b.metricsBuffer.Batch(MetricBatchSize)
-	
+	batch := b.metricsBuffer.Batch(b.metricsBufferSize)
+
 	wg.Add(len(b.RegisteredBackends))
-	for _, bm := range b.RegisteredBackends{
+	for _, bm := range b.RegisteredBackends {
 		go func() {
 			defer wg.Done()
 			err := bm.Flush(batch)
 			if err != nil {
-				fmt.Printf("Error occurred when posting to Forwarder API: %s \n", err.Error())
+				b.logger.Printf("Error occurred when posting to Forwarder API: %s \n", err.Error())
 			}
-			
+
 		}()
 	}
-	
+
 	wg.Wait()
 }

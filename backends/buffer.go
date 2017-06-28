@@ -63,7 +63,7 @@ func (b *Buffer) Add(metrics ...metrics.MetricDataPoint) {
 func (b *Buffer) Batch(batchSize int) []byte {
 	n := min(len(b.buf), batchSize)
 	// out := make([]metrics.MetricDataPoint, n)
-	
+
 	bs := make([]byte, 0, 128*n)
 	for i := 0; i < n; i++ {
 		dp := <-b.buf
